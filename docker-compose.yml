@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  supermemory-native:
+    build: .
+    container_name: supermemory-native
+    ports:
+      - "6767:6767"
+    environment:
+      - PORT=6767
+      - EMBEDDING_PROVIDER=ollama
+      - EMBEDDING_MODEL=nomic-embed-text
+      # Points to the host's Ollama instance over the Docker gateway
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - DB_PATH=/data/supermemory.db
+    volumes:
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
