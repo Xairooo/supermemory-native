@@ -1,0 +1,16 @@
+# Binary
+supermemory-native
+
+# IDEs
+.idea/
+.vscode/
+
+# Local DB files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local helper scripts
+deploy.sh
+
