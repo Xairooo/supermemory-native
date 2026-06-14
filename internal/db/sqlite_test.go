@@ -22,6 +22,7 @@ func TestSqliteDB(t *testing.T) {
 		Vector:       []float32{1.0, 0.0, 0.0},
 		ContainerTag: "user_alice",
 		CreatedAt:    time.Now(),
+		FilePath:     "/vault/mem1.okf",
 	}
 	if err := sdb.SaveMemory(m1); err != nil {
 		t.Fatalf("failed to save memory: %v", err)
@@ -33,6 +34,7 @@ func TestSqliteDB(t *testing.T) {
 		Vector:       []float32{0.0, 1.0, 0.0},
 		ContainerTag: "user_alice",
 		CreatedAt:    time.Now(),
+		FilePath:     "/vault/mem2.okf",
 	}
 	if err := sdb.SaveMemory(m2); err != nil {
 		t.Fatalf("failed to save memory: %v", err)
@@ -46,9 +48,22 @@ func TestSqliteDB(t *testing.T) {
 	if len(list) != 2 {
 		t.Errorf("expected 2 memories, got %d", len(list))
 	}
+	
+	// Assert file paths exist
+	foundMem1 := false
+	for _, m := range list {
+		if m.ID == "mem1" {
+			foundMem1 = true
+			if m.FilePath != "/vault/mem1.okf" {
+				t.Errorf("expected file path '/vault/mem1.okf', got %q", m.FilePath)
+			}
+		}
+	}
+	if !foundMem1 {
+		t.Error("expected to find mem1 in listed memories")
+	}
 
 	// 3. Search memories (Semantic Search)
-	// Query is highly similar to m1
 	queryVec := []float32{1.0, 0.1, 0.0}
 	results, err := sdb.SearchMemories("user_alice", queryVec, 0.5, 10)
 	if err != nil {
@@ -59,6 +74,9 @@ func TestSqliteDB(t *testing.T) {
 	}
 	if results[0].Memory.ID != "mem1" {
 		t.Errorf("expected mem1, got %s", results[0].Memory.ID)
+	}
+	if results[0].Memory.FilePath != "/vault/mem1.okf" {
+		t.Errorf("expected search result to carry correct FilePath, got %q", results[0].Memory.FilePath)
 	}
 
 	// 4. Delete memory

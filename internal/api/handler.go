@@ -51,6 +51,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleProfileQuery(w, r)
 	case "/v3/search", "/v4/search":
 		h.handleSearchQuery(w, r)
+	case "/v3/sync":
+		h.handleSync(w, r)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error": "endpoint not found"}`))
@@ -163,5 +165,19 @@ func (h *Handler) handleSearchQuery(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"results": searchResults,
 		"total":   len(results),
+	})
+}
+
+func (h *Handler) handleSync(w http.ResponseWriter, r *http.Request) {
+	if err := h.Engine.SyncVault(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error": "` + err.Error() + `"}`))
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Vault synchronization completed successfully",
 	})
 }

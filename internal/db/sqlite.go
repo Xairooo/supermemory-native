@@ -17,6 +17,7 @@ type Memory struct {
 	Vector       []float32 `json:"vector"`
 	ContainerTag string    `json:"container_tag"`
 	CreatedAt    time.Time `json:"created_at"`
+	FilePath     string    `json:"file_path"`
 }
 
 type SearchResult struct {
@@ -41,13 +42,45 @@ func NewSqliteDB(dbPath string) (*SqliteDB, error) {
 		content TEXT NOT NULL,
 		vector TEXT NOT NULL,
 		container_tag TEXT NOT NULL,
-		created_at DATETIME NOT NULL
+		created_at DATETIME NOT NULL,
+		file_path TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_memories_container ON memories(container_tag);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+
+	// Check if file_path column exists in case the table was created under an older schema version
+	rows, err := db.Query("PRAGMA table_info(memories)")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	
+	hasFilePath := false
+	for rows.Next() {
+		var cid int
+		var name, typeStr string
+		var notnull, pk int
+		var dfltVal sql.NullString
+		if err := rows.Scan(&cid, &name, &typeStr, &notnull, &dfltVal, &pk); err != nil {
+			rows.Close()
+			db.Close()
+			return nil, err
+		}
+		if name == "file_path" {
+			hasFilePath = true
+		}
+	}
+	rows.Close()
+
+	if !hasFilePath {
+		if _, err := db.Exec("ALTER TABLE memories ADD COLUMN file_path TEXT NOT NULL DEFAULT ''"); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 
 	return &SqliteDB{db: db}, nil
@@ -64,15 +97,16 @@ func (s *SqliteDB) SaveMemory(m Memory) error {
 	}
 
 	query := `
-	INSERT INTO memories (id, content, vector, container_tag, created_at)
-	VALUES (?, ?, ?, ?, ?)
+	INSERT INTO memories (id, content, vector, container_tag, created_at, file_path)
+	VALUES (?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		content = excluded.content,
 		vector = excluded.vector,
 		container_tag = excluded.container_tag,
-		created_at = excluded.created_at;
+		created_at = excluded.created_at,
+		file_path = excluded.file_path;
 	`
-	_, err = s.db.Exec(query, m.ID, m.Content, string(vectorJSON), m.ContainerTag, m.CreatedAt)
+	_, err = s.db.Exec(query, m.ID, m.Content, string(vectorJSON), m.ContainerTag, m.CreatedAt, m.FilePath)
 	return err
 }
 
@@ -82,7 +116,7 @@ func (s *SqliteDB) DeleteMemory(id string) error {
 }
 
 func (s *SqliteDB) ListMemories(containerTag string, limit int) ([]Memory, error) {
-	rows, err := s.db.Query("SELECT id, content, vector, container_tag, created_at FROM memories WHERE container_tag = ? ORDER BY created_at DESC LIMIT ?", containerTag, limit)
+	rows, err := s.db.Query("SELECT id, content, vector, container_tag, created_at, file_path FROM memories WHERE container_tag = ? ORDER BY created_at DESC LIMIT ?", containerTag, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +126,7 @@ func (s *SqliteDB) ListMemories(containerTag string, limit int) ([]Memory, error
 	for rows.Next() {
 		var m Memory
 		var vectorStr string
-		if err := rows.Scan(&m.ID, &m.Content, &vectorStr, &m.ContainerTag, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &vectorStr, &m.ContainerTag, &m.CreatedAt, &m.FilePath); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(vectorStr), &m.Vector); err != nil {
@@ -104,7 +138,7 @@ func (s *SqliteDB) ListMemories(containerTag string, limit int) ([]Memory, error
 }
 
 func (s *SqliteDB) SearchMemories(containerTag string, queryVec []float32, threshold float32, limit int) ([]SearchResult, error) {
-	rows, err := s.db.Query("SELECT id, content, vector, container_tag, created_at FROM memories WHERE container_tag = ?", containerTag)
+	rows, err := s.db.Query("SELECT id, content, vector, container_tag, created_at, file_path FROM memories WHERE container_tag = ?", containerTag)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +148,7 @@ func (s *SqliteDB) SearchMemories(containerTag string, queryVec []float32, thres
 	for rows.Next() {
 		var m Memory
 		var vectorStr string
-		if err := rows.Scan(&m.ID, &m.Content, &vectorStr, &m.ContainerTag, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &vectorStr, &m.ContainerTag, &m.CreatedAt, &m.FilePath); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(vectorStr), &m.Vector); err != nil {
@@ -146,4 +180,52 @@ func (s *SqliteDB) SearchMemories(containerTag string, queryVec []float32, thres
 	}
 
 	return results, nil
+}
+
+// GetUnmigratedMemories retrieves all memories that have an empty file_path.
+func (s *SqliteDB) GetUnmigratedMemories() ([]Memory, error) {
+	rows, err := s.db.Query("SELECT id, content, container_tag, created_at FROM memories WHERE file_path = ''")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var memories []Memory
+	for rows.Next() {
+		var m Memory
+		if err := rows.Scan(&m.ID, &m.Content, &m.ContainerTag, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		memories = append(memories, m)
+	}
+	return memories, nil
+}
+
+// UpdateFilePath updates the file path pointer for a specific memory record.
+func (s *SqliteDB) UpdateFilePath(id, filePath string) error {
+	_, err := s.db.Exec("UPDATE memories SET file_path = ? WHERE id = ?", filePath, id)
+	return err
+}
+
+// GetAllMemories retrieves all memories from the database.
+func (s *SqliteDB) GetAllMemories() ([]Memory, error) {
+	rows, err := s.db.Query("SELECT id, content, vector, container_tag, created_at, file_path FROM memories")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var memories []Memory
+	for rows.Next() {
+		var m Memory
+		var vectorStr string
+		if err := rows.Scan(&m.ID, &m.Content, &vectorStr, &m.ContainerTag, &m.CreatedAt, &m.FilePath); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(vectorStr), &m.Vector); err != nil {
+			return nil, err
+		}
+		memories = append(memories, m)
+	}
+	return memories, nil
 }

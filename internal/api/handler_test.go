@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/supermemory-native/supermemory-native/internal/db"
 	"github.com/supermemory-native/supermemory-native/internal/embedding"
 	"github.com/supermemory-native/supermemory-native/internal/memory"
+	"github.com/supermemory-native/supermemory-native/internal/vault"
 )
 
 func setupTestHandler(t *testing.T) (*Handler, func()) {
@@ -17,12 +19,27 @@ func setupTestHandler(t *testing.T) (*Handler, func()) {
 	if err != nil {
 		t.Fatalf("failed to init db: %v", err)
 	}
+
+	tempVaultDir, err := os.MkdirTemp("", "supermemory_api_vault_test_*")
+	if err != nil {
+		sdb.Close()
+		t.Fatalf("failed to create temp vault dir: %v", err)
+	}
+
+	v, err := vault.NewVault(tempVaultDir)
+	if err != nil {
+		sdb.Close()
+		os.RemoveAll(tempVaultDir)
+		t.Fatalf("failed to init vault: %v", err)
+	}
+
 	prov := embedding.NewMockProvider()
-	eng := memory.NewEngine(sdb, prov)
+	eng := memory.NewEngine(sdb, prov, v)
 	handler := NewHandler(eng)
 
 	return handler, func() {
 		sdb.Close()
+		os.RemoveAll(tempVaultDir)
 	}
 }
 
@@ -175,5 +192,31 @@ func TestHandlerProfileAndSearch(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestHandlerSync(t *testing.T) {
+	handler, cleanup := setupTestHandler(t)
+	defer cleanup()
+
+	// Hit the sync endpoint
+	req := httptest.NewRequest("POST", "/v3/sync", bytes.NewBuffer([]byte(`{}`)))
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if !resp.Success {
+		t.Error("expected success to be true")
+	}
+	if resp.Message != "Vault synchronization completed successfully" {
+		t.Errorf("unexpected success message: %q", resp.Message)
 	}
 }
