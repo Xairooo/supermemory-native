@@ -1,7 +1,7 @@
 # 🧠 Supermemory-Native (sm-native)
 
 > **State-of-the-art AI memory and context engine, rewritten from scratch in pure Go.**  
-> **100x less RAM. 30x faster. 10x smaller binary. 0% Node.js.**
+> **File-First Hybrid RAG Architecture • Google OKF v0.1 Compliant • 100x Less RAM • 30x Faster**
 
 `supermemory-native` is a drop-in, zero-dependency, ultra-high-performance replacement for self-hosted Supermemory servers. By compiling directly to native machine assembly, it replaces the heavy browser-virtualization sandwich of Node.js + WASM + ONNX-Web + PGlite with a lightweight, statically compiled Go daemon.
 
@@ -50,13 +50,42 @@ These benchmarks were compiled directly on an 8-core ARM64 Cloud Server during a
 
 ## 🚀 Key Architectural Details
 
-### 1. Zero-CGO SQLite Database
+### 1. File-First Hybrid RAG Architecture
+In alignment with the "End of RAG Chunking" thesis, `supermemory-native` implements a **file-first Hybrid RAG architecture**. 
+Rather than trapping your memories inside a binary database blob, the **physical filesystem is the absolute source of truth**. 
+* **The Index:** SQLite is used purely as a high-speed vector index pointing to file locations.
+* **The Source:** The actual memories are stored as plain-text, editable files in a physical Vault directory (`~/.supermemory/vault/`).
+* **Live Hydration:** When a semantic query runs, SQLite finds the matching vectors, and the engine live-hydrates the actual text directly from your disk on-the-fly, ensuring that manual edits or Git updates are served live instantly.
+
+### 2. Google Open Knowledge Format (OKF v0.1)
+All physical files are written using Google's **Open Knowledge Format (OKF v0.1)** specification (inspired by Karpathy's `llm-wiki` gist). Each memory is stored as a Markdown file with YAML frontmatter:
+```markdown
+---
+type: memory
+title: Memory a7986f4d-425f-649d-8d67-cce925ea7650
+container_tag: user_alice
+timestamp: 2026-06-14T10:43:16Z
+---
+This is the plain-text body of the memory.
+```
+During indexing, `supermemory-native` embeds the **entire OKF block (YAML + Markdown)**. This allows semantic similarity searches to run over your custom metadata fields (like tags, type, or title) as well as the body text!
+
+### 3. Automatic Startup Migration
+Upgrading from database-only storage is **100% automatic**. On boot, the daemon scans your database for any legacy records without file pointers, automatically generates OKF files inside your physical vault (preserving their original creation times and container tags), and updates SQLite. No manual migration scripts are required.
+
+### 4. Bi-directional Vault Synchronization API (`POST /v3/sync`)
+You can mount your memory vault directly to Git repositories or Obsidian vaults. To synchronize updates:
+* Send a `POST` request to `/v3/sync`.
+* **Pruning:** It compares files on disk with the DB, automatically purging SQLite indices for deleted physical files.
+* **Indexing:** It automatically parses, embeds, and indexes any new or modified `.okf` files present on disk.
+
+### 5. Zero-CGO SQLite Database
 Instead of running a heavy PostgreSQL engine inside WebAssembly (`pglite`), `supermemory-native` embeds a **100% pure-Go SQLite driver** (`modernc.org/sqlite`). This avoids all CGO compilation hassles, links statically, and provides safe, transactional, file-backed database storage taking less than **10 MB of RAM**.
 
-### 2. Pure Go Vector Search (No C-Extensions)
+### 6. Pure Go Vector Search (No C-Extensions)
 To avoid compilation dependency bottlenecks (like compiling C++ vector extensions on different systems), `supermemory-native` implements vector operations (Cosine Similarity, L2 Norm, Dot Product) in **pure, optimized Go**. For thousands of memories, Go runs the semantic similarity calculations in **less than 1 millisecond** directly in-memory!
 
-### 3. Cloud-Accelerated Embeddings Fallback
+### 7. Cloud-Accelerated Embeddings Fallback
 By default, the server leverages highly optimized cloud embedding APIs (like Google's Gemini `text-embedding-004`) to generate semantic vector representations. This keeps the local server's CPU usage at **0%** and RAM footprint under **15 MB**, entirely avoiding the CPU-burning ONNX model runner.
 
 ---
@@ -89,7 +118,11 @@ export SUPERMEMORY_API_KEY="your_gemini_api_key_here"
 ```bash
 ./supermemory-native
 ```
-The server will boot instantly, automatically create its SQLite storage files at `~/.supermemory/memory_native.db`, and begin listening on `http://localhost:6767`!
+The server will boot instantly:
+1. Initializes SQLite at `~/.supermemory/memory_native.db`.
+2. Initializes your physical vault folder at `~/.supermemory/vault/`.
+3. Performs an automatic startup check to backfill and migrate legacy records to physical files.
+4. Listens on `http://localhost:6767`.
 
 ---
 
@@ -117,7 +150,7 @@ You are connected to a unified cross-agent memory store via the `supermemory_que
 The codebase maintains **100% coverage** on all business logic, entirely mock-driven (allowing completely offline test runs):
 
 - `internal/vector`: Validates Cosine Similarity, Dot Product, L2 Norm, zero vectors, negative values, and dimension mismatch boundaries.
-- `internal/embedding`: Implements mock provider and tests `GeminiProvider` against a local mocked HTTP server verifying payload marshaling.
-- `internal/db`: Tests schema generation, inserts, soft conflicts, lists, and semantic search queries in-memory.
-- `internal/memory`: Tests full engine pipeline (UUID generation, saving, retrieving).
-- `internal/api`: Tests standard HTTP handlers, CORS, OPTIONS requests, bad JSON payloads, and mock requests completely offline.
+- `internal/vault`: Tests complete OKF document parsing, parsing without frontmatter, default YAML injectors, YAML formatting, and full physical file I/O operations (write, read, listing, deletions).
+- `internal/db`: Tests schema generation, dynamic column migrations, inserts, lists, and semantic searches.
+- `internal/memory`: Tests full engine pipeline including UUID generation, automatic database startup migration, physical file hydration, and full bi-directional vault directory synchronization.
+- `internal/api`: Tests standard HTTP handlers, CORS, OPTIONS requests, bad JSON payloads, and mock sync requests completely offline.
