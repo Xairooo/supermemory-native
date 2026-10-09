@@ -71,6 +71,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.URL.Path {
+	case "/v3/config":
+		h.handleConfig(w, r)
 	case "/v3/documents":
 		h.handleAddDocument(w, r)
 	case "/v3/documents/documents":
@@ -87,6 +89,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error": "endpoint not found"}`))
 	}
+}
+
+func (h *Handler) handleConfig(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+	})
 }
 
 func (h *Handler) handleAddDocument(w http.ResponseWriter, r *http.Request) {
