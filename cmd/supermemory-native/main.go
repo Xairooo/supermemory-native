@@ -86,14 +86,30 @@ func main() {
 	// 4. Initialize Core Engine
 	var provider embedding.EmbeddingProvider
 	providerType := os.Getenv("EMBEDDING_PROVIDER")
-	if providerType == "ollama" {
+	switch providerType {
+	case "ollama":
 		model := os.Getenv("EMBEDDING_MODEL")
 		if model == "" {
 			model = "nomic-embed-text"
 		}
 		log.Printf("Using Ollama Embedding Provider with model: %s", model)
 		provider = embedding.NewOllamaProvider(model)
-	} else {
+	case "bifrost", "openai":
+		model := os.Getenv("EMBEDDING_MODEL")
+		if model == "" {
+			model = "Sense/Qwen3-Embedding-0.6B-GGUF"
+		}
+		baseURL := os.Getenv("OPENAI_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://bifrost.xairo.ipv64.net/v1"
+		}
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			apiKey = os.Getenv("SUPERMEMORY_API_KEY")
+		}
+		log.Printf("Using OpenAI/Bifrost Embedding Provider with model: %s, baseURL: %s", model, baseURL)
+		provider = embedding.NewOpenAIProvider(model, baseURL, apiKey)
+	default:
 		log.Println("Using Gemini Cloud Embedding Provider")
 		provider = embedding.NewGeminiProvider(apiKey)
 	}
